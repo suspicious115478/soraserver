@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,19 +13,47 @@ console.log('Environment loaded:');
 console.log('RAZORPAY_KEY_ID:', process.env.RAZORPAY_KEY_ID ? '✓ Loaded' : '✗ Missing');
 console.log('RAZORPAY_KEY_SECRET:', process.env.RAZORPAY_KEY_SECRET ? '✓ Loaded' : '✗ Missing');
 console.log('PORT:', PORT);
+console.log('NODE_ENV:', process.env.NODE_ENV || 'development');
 
 // Middleware with enhanced CORS
 app.use(cors({
-  origin: ['http://localhost', 'http://127.0.0.1','http://127.0.0.1:5500','https://shiny-marzipan-e2ad1e.netlify.app/', 'file://'], // Allow local file access
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, Postman, server-side requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'https://shiny-marzipan-e2ad1e.netlify.app', // Your frontend URL (removed trailing slash)
+      'http://localhost:5500',
+      'http://127.0.0.1:5500',
+      'http://localhost:3000',
+      'http://127.0.0.1:3000'
+    ];
+    
+    // Allow all origins in development
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
+      console.log('CORS error:', msg);
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   credentials: true
 }));
 app.use(express.json());
 
+// Serve static files if needed
+app.use(express.static(path.join(__dirname, 'public')));
+
 // Request logging middleware
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  if (Object.keys(req.body).length > 0) {
-    console.log('Request body:', req.body);
+  if (Object.keys(req.body).length > 0 && req.path !== '/api/verify-payment') {
+    // Don't log full payment verification requests for security
+    console.log('Request body:', JSON.stringify(req.body).substring(0, 200) + '...');
   }
   next();
 });
@@ -38,7 +67,12 @@ const razorpay = new Razorpay({
 // Test Razorpay connection on startup
 razorpay.orders.all({count: 1})
   .then(() => console.log('✓ Razorpay connection successful'))
-  .catch(error => console.error('✗ Razorpay connection failed:', error.error?.description || error.message));
+  .catch(error => {
+    console.error('✗ Razorpay connection failed:', error.error?.description || error.message);
+    if (error.error && error.error.description) {
+      console.error('Razorpay error details:', error.error);
+    }
+  });
 
 // Store to keep track of orders
 const ordersStore = new Map();
@@ -103,7 +137,6 @@ app.post('/api/create-order', async (req, res) => {
 app.post('/api/verify-payment', (req, res) => {
   try {
     console.log('=== VERIFY PAYMENT REQUEST ===');
-    console.log('Verification request body:', req.body);
     
     const { order_id, payment_id, signature } = req.body;
     
@@ -196,7 +229,8 @@ app.get('/health', (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     ordersCount: ordersStore.size,
-    razorpayConfigured: !!process.env.RAZORPAY_KEY_ID
+    razorpayConfigured: !!process.env.RAZORPAY_KEY_ID,
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -205,7 +239,24 @@ app.get('/api/test', (req, res) => {
   res.json({ 
     message: 'Server is working!',
     timestamp: new Date().toISOString(),
-    razorpayKey: process.env.RAZORPAY_KEY_ID ? 'Configured' : 'Missing'
+    razorpayKey: process.env.RAZORPAY_KEY_ID ? 'Configured' : 'Missing',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    message: 'ScreenRent Backend API',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      test: '/api/test',
+      createOrder: '/api/create-order (POST)',
+      verifyPayment: '/api/verify-payment (POST)',
+      getOrders: '/api/orders (GET)'
+    }
   });
 });
 
@@ -214,7 +265,8 @@ app.use((error, req, res, next) => {
   console.error('Unhandled error:', error);
   res.status(500).json({
     success: false,
-    message: 'Internal server error'
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
   });
 });
 
@@ -223,16 +275,17 @@ app.use((req, res) => {
   console.log('404 - Route not found:', req.method, req.path);
   res.status(404).json({
     success: false,
-    message: 'Route not found'
+    message: 'Route not found',
+    path: req.path
   });
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n=== Server started on port ${PORT} ===`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Test endpoint: http://localhost:${PORT}/api/test`);
   console.log(`Orders debug: http://localhost:${PORT}/api/orders`);
   console.log('Waiting for requests...\n');
 });
-// [file content end]

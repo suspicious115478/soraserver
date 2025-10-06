@@ -222,7 +222,7 @@ app.use((error, req, res, next) => {
 });
 
 // ✅ Server startup with error handling
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
     console.log(`\n🚀 Server started successfully on port ${PORT}`);
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`📍 Health check: https://soraserver.onrender.com/health`);
@@ -230,7 +230,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('📍 Waiting for requests...\n');
 }).on('error', (err) => {
     console.error('❌ Server failed to start:', err);
-    process.exit(1);
+    // process.exit(1);
 });
 
 // ✅ Handle uncaught exceptions

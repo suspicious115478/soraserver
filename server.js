@@ -98,7 +98,8 @@ app.post('/api/verify-payment', (req, res) => {
         // Frontend se jo keys aa rahi hain unhe destructure karein
         const { order_id, payment_id, signature } = req.body;
 
-        console.log("Verifying Payment for Order:", order_id);
+               console.log("🔍 VERIFY REQUEST BODY:", JSON.stringify(req.body));
+        console.log("🔍 Destructured:", { order_id, payment_id, signature });
 
         if (!order_id || !payment_id || !signature) {
             console.error("❌ Verification failed: Missing parameters in body", req.body);
@@ -175,4 +176,5 @@ app.listen(PORT, () => {
 📍 URL: https://soraserver.onrender.com
     `);
 });
+
 

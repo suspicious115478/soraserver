@@ -118,7 +118,13 @@ app.post('/api/verify-payment', (req, res) => {
             .createHmac('sha256', RAZORPAY_KEY_SECRET)
             .update(order_id + "|" + payment_id)
             .digest('hex');
-
+// Add these console.log lines right before the if(generated_signature === signature) check
+console.log("🔑 Key Secret Used (first 5 chars):", RAZORPAY_KEY_SECRET.substring(0, 5) + "...");
+console.log("🧾 Order ID from request:", order_id);
+console.log("💰 Payment ID from request:", payment_id);
+console.log("✍️  Signature from request:", signature);
+console.log("🔐 Generated signature:", generated_signature);
+        
         if (generated_signature === signature) {
             console.log("✅ Signature matched for:", order_id);
             
@@ -169,3 +175,4 @@ app.listen(PORT, () => {
 📍 URL: https://soraserver.onrender.com
     `);
 });
+

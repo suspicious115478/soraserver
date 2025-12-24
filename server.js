@@ -8,25 +8,28 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- 1. MIDDLEWARES ---
+// --- 1. MIDDLEWARES (ORDER MATTERS!) ---
 
-// ✅ Sabse pehle Body Parser taaki data read ho sake
+// ✅ 1. Sabse pehle CORS taaki preflight requests (OPTIONS) handle ho sakein
+app.use(cors({
+    origin: '*', // Production mein isse apni frontend URL se replace karein
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    credentials: true
+}));
+
+// ✅ 2. Pre-flight handling
+app.options('*', cors());
+
+// ✅ 3. Body Parsers (CORS ke BAAD rakhein)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ Phir CORS Configuration
-app.use(cors({
-    origin: '*', 
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
-app.options('*', cors());
-
-// ✅ Phir Request Logger (Ab ye parsed body dikhayega)
+// ✅ 4. Request Logger
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
     if (req.method === 'POST') {
-        console.log('Payload Received:', req.body);
+        console.log('Payload Received:', JSON.stringify(req.body, null, 2));
     }
     next();
 });
@@ -53,7 +56,6 @@ const ordersStore = new Map();
 
 // --- 3. ROUTES ---
 
-// Health Check
 app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
@@ -70,7 +72,7 @@ app.post('/api/create-order', async (req, res) => {
         }
 
         const options = {
-            amount: Math.round(amount * 100), // Paise mein convert
+            amount: Math.round(amount * 100), 
             currency: currency || 'INR',
             receipt: receipt || `rec_${Date.now()}`,
         };
@@ -93,12 +95,13 @@ app.post('/api/create-order', async (req, res) => {
 // Verify Payment
 app.post('/api/verify-payment', (req, res) => {
     try {
+        // Frontend se jo keys aa rahi hain unhe destructure karein
         const { order_id, payment_id, signature } = req.body;
 
         console.log("Verifying Payment for Order:", order_id);
 
         if (!order_id || !payment_id || !signature) {
-            console.error("❌ Verification failed: Missing parameters");
+            console.error("❌ Verification failed: Missing parameters in body", req.body);
             return res.status(400).json({ 
                 success: false, 
                 message: 'order_id, payment_id, and signature are required' 
@@ -106,19 +109,18 @@ app.post('/api/verify-payment', (req, res) => {
         }
 
         if (!RAZORPAY_KEY_SECRET) {
-            console.error("❌ RAZORPAY_KEY_SECRET is not defined!");
+            console.error("❌ RAZORPAY_KEY_SECRET is missing!");
             return res.status(500).json({ success: false, message: 'Server secret missing' });
         }
 
-        // Signature Validation Logic
-        const body = order_id + "|" + payment_id;
-        const expectedSignature = crypto
+        // HMAC SHA256 Signature verification
+        const generated_signature = crypto
             .createHmac('sha256', RAZORPAY_KEY_SECRET)
-            .update(body.toString())
+            .update(order_id + "|" + payment_id)
             .digest('hex');
 
-        if (expectedSignature === signature) {
-            console.log("✅ Signature matched!");
+        if (generated_signature === signature) {
+            console.log("✅ Signature matched for:", order_id);
             
             if (ordersStore.has(order_id)) {
                 const orderData = ordersStore.get(order_id);
@@ -131,7 +133,7 @@ app.post('/api/verify-payment', (req, res) => {
                 message: 'Payment verified successfully' 
             });
         } else {
-            console.error("❌ Signature mismatch!");
+            console.error("❌ Signature mismatch! Possible tampering or wrong secret.");
             return res.status(400).json({ 
                 success: false, 
                 message: 'Invalid signature. Payment verification failed.' 

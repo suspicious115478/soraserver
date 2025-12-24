@@ -8,237 +8,162 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ PEHLE BASIC CORS - Simple aur working
+// --- 1. MIDDLEWARES ---
+
+// ✅ CORS Configuration: Isse routes se pehle hona chahiye
 app.use(cors({
-    origin: '*',
+    origin: '*', // Production mein isse apni domain se replace karein
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
-
-// ✅ Preflight requests handle karo
 app.options('*', cors());
 
+// ✅ Body Parser: Isse routes se pehle hona chahiye taaki req.body read ho sake
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// ✅ Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ✅ Debug environment variables
-console.log('=== Server Starting ===');
-console.log('PORT:', PORT);
-console.log('NODE_ENV:', process.env.NODE_ENV || 'development');
-console.log('RAZORPAY_KEY_ID:', process.env.RAZORPAY_KEY_ID ? '✓ Loaded' : '✗ Missing');
-
-// ✅ Basic health check - sabse pehle
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        message: 'Server is running!',
-        timestamp: new Date().toISOString(),
-        port: PORT
-    });
-});
-
-// ✅ Simple test endpoint
-app.get('/api/test', (req, res) => {
-    res.json({ 
-        message: 'API is working!',
-        timestamp: new Date().toISOString(),
-        razorpay: process.env.RAZORPAY_KEY_ID ? 'Configured' : 'Not configured'
-    });
-});
-
-// ✅ Root endpoint
-app.get('/', (req, res) => {
-    res.json({
-        message: 'ScreenRent Backend API',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-        endpoints: {
-            health: '/health',
-            test: '/api/test',
-            createOrder: '/api/create-order (POST)',
-            verifyPayment: '/api/verify-payment (POST)'
-        }
-    });
-});
-
-// ✅ Request logging middleware
+// ✅ Request Logger: Har request ka console log
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+    if (req.method === 'POST') console.log('Payload:', req.body);
     next();
 });
 
-// ✅ Initialize Razorpay only if keys are available
+app.use(express.static(path.join(__dirname, 'public')));
+
+// --- 2. INITIALIZATION ---
+
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+
 let razorpay;
-if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+if (RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET) {
     razorpay = new Razorpay({
-        key_id: process.env.RAZORPAY_KEY_ID,
-        key_secret: process.env.RAZORPAY_KEY_SECRET
+        key_id: RAZORPAY_KEY_ID,
+        key_secret: RAZORPAY_KEY_SECRET
     });
-    console.log('✓ Razorpay initialized');
+    console.log('✅ Razorpay initialized successfully');
 } else {
-    console.log('⚠️ Razorpay keys missing - payment features will not work');
+    console.error('❌ Razorpay keys missing in .env file!');
 }
 
-// ✅ Store to keep track of orders
 const ordersStore = new Map();
 
-// ✅ 1. Create Order Endpoint
+// --- 3. ROUTES ---
+
+// Health Check
+app.get('/health', (req, res) => {
+    res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Create Order
 app.post('/api/create-order', async (req, res) => {
     try {
-        // Check if Razorpay is configured
-        if (!razorpay) {
-            return res.status(500).json({
-                success: false,
-                message: 'Payment service not configured'
-            });
-        }
+        if (!razorpay) throw new Error('Razorpay not configured');
 
-        console.log('Create order request:', req.body);
         const { amount, currency, receipt } = req.body;
         
-        // Validate amount
         if (!amount || amount < 1) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid amount'
-            });
+            return res.status(400).json({ success: false, message: 'Invalid amount' });
         }
-        
+
         const options = {
-            amount: Math.round(amount * 100), // amount in paise
+            amount: Math.round(amount * 100), // Paise mein convert
             currency: currency || 'INR',
             receipt: receipt || `rec_${Date.now()}`,
-            payment_capture: 1
         };
 
         const order = await razorpay.orders.create(options);
-        console.log('Order created:', order.id);
         
-        // Store order details
         ordersStore.set(order.id, {
-            amount: options.amount,
-            currency: options.currency,
-            receipt: options.receipt,
-            created_at: new Date(),
-            status: 'created'
+            ...options,
+            status: 'created',
+            created_at: new Date()
         });
-        
-        res.json({
-            success: true,
-            order: order
-        });
-        
+
+        res.json({ success: true, order });
     } catch (error) {
-        console.error('Error creating order:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to create order',
-            error: error.error ? error.error.description : error.message
-        });
+        console.error('Order Creation Error:', error);
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 
-// ✅ 2. Verify Payment Endpoint
+// ✅ UPDATED: Verify Payment
 app.post('/api/verify-payment', (req, res) => {
     try {
-        console.log('Verify payment request:', req.body);
-        
         const { order_id, payment_id, signature } = req.body;
-        
+
+        // Debugging logs
+        console.log("Verifying Payment for Order:", order_id);
+
         if (!order_id || !payment_id || !signature) {
-            return res.status(400).json({
-                success: false,
-                message: 'Missing parameters'
+            console.error("❌ Verification failed: Missing parameters");
+            return res.status(400).json({ 
+                success: false, 
+                message: 'order_id, payment_id, and signature are required' 
             });
         }
-        
-        // Generate expected signature
-        const generated_signature = crypto
-            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
-            .update(order_id + "|" + payment_id)
+
+        if (!RAZORPAY_KEY_SECRET) {
+            console.error("❌ RAZORPAY_KEY_SECRET is not defined!");
+            return res.status(500).json({ success: false, message: 'Server secret missing' });
+        }
+
+        // Signature Validation Logic
+        const body = order_id + "|" + payment_id;
+        const expectedSignature = crypto
+            .createHmac('sha256', RAZORPAY_KEY_SECRET)
+            .update(body.toString())
             .digest('hex');
-        
-        if (generated_signature === signature) {
-            // Update order status
-            if (ordersStore.has(order_id)) {
-                const order = ordersStore.get(order_id);
-                order.status = 'verified';
-                order.payment_id = payment_id;
-                order.verified_at = new Date();
-            }
+
+        if (expectedSignature === signature) {
+            console.log("✅ Signature matched!");
             
-            res.json({
-                success: true,
-                message: 'Payment verified successfully',
-                orderId: order_id,
-                paymentId: payment_id
+            if (ordersStore.has(order_id)) {
+                const orderData = ordersStore.get(order_id);
+                orderData.status = 'verified';
+                orderData.payment_id = payment_id;
+            }
+
+            return res.json({ 
+                success: true, 
+                message: 'Payment verified successfully' 
             });
         } else {
-            res.status(400).json({
-                success: false,
-                message: 'Payment verification failed'
+            console.error("❌ Signature mismatch!");
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid signature. Payment verification failed.' 
             });
         }
     } catch (error) {
-        console.error('Error verifying payment:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error verifying payment'
-        });
+        console.error('Verification Error:', error);
+        res.status(500).json({ success: false, message: 'Internal Server Error' });
     }
 });
 
-// ✅ 3. Get all orders endpoint (for debugging)
+// View Orders (Debug Only)
 app.get('/api/orders', (req, res) => {
-    const ordersArray = Array.from(ordersStore.entries()).map(([id, details]) => {
-        return { id, ...details };
-    });
-    
-    res.json({
-        success: true,
-        orders: ordersArray,
-        count: ordersArray.length
-    });
+    res.json({ success: true, orders: Array.from(ordersStore.values()) });
 });
 
-// ✅ 404 handler
+// --- 4. ERROR HANDLING ---
+
 app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        message: 'Route not found',
-        path: req.path
-    });
+    res.status(404).json({ success: false, message: 'Route not found' });
 });
 
-// ✅ Error handling middleware
-app.use((error, req, res, next) => {
-    console.error('Server error:', error);
-    res.status(500).json({
-        success: false,
-        message: 'Internal server error'
-    });
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ success: false, message: 'Something went wrong!' });
 });
 
-// ✅ Server startup with error handling
+// --- 5. START SERVER ---
+
 app.listen(PORT, () => {
-    console.log(`\n🚀 Server started successfully on port ${PORT}`);
-    console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`📍 Health check: https://soraserver.onrender.com/health`);
-    console.log(`📍 API test: https://soraserver.onrender.com/api/test`);
-    console.log('📍 Waiting for requests...\n');
-}).on('error', (err) => {
-    console.error('❌ Server failed to start:', err);
-    // process.exit(1);
+    console.log(`
+🚀 Server is live!
+📍 Port: ${PORT}
+📍 URL: https://soraserver.onrender.com
+    `);
 });
-
-// ✅ Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-    console.error('⚠️ Uncaught Exception:', error);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('⚠️ Unhandled Rejection at:', promise, 'reason:', reason);
-});
-

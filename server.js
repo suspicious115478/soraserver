@@ -10,22 +10,24 @@ const PORT = process.env.PORT || 3000;
 
 // --- 1. MIDDLEWARES ---
 
-// ✅ CORS Configuration: Isse routes se pehle hona chahiye
+// ✅ Sabse pehle Body Parser taaki data read ho sake
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ Phir CORS Configuration
 app.use(cors({
-    origin: '*', // Production mein isse apni domain se replace karein
+    origin: '*', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 app.options('*', cors());
 
-// ✅ Body Parser: Isse routes se pehle hona chahiye taaki req.body read ho sake
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// ✅ Request Logger: Har request ka console log
+// ✅ Phir Request Logger (Ab ye parsed body dikhayega)
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-    if (req.method === 'POST') console.log('Payload:', req.body);
+    if (req.method === 'POST') {
+        console.log('Payload Received:', req.body);
+    }
     next();
 });
 
@@ -88,12 +90,11 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// ✅ UPDATED: Verify Payment
+// Verify Payment
 app.post('/api/verify-payment', (req, res) => {
     try {
         const { order_id, payment_id, signature } = req.body;
 
-        // Debugging logs
         console.log("Verifying Payment for Order:", order_id);
 
         if (!order_id || !payment_id || !signature) {
@@ -142,7 +143,6 @@ app.post('/api/verify-payment', (req, res) => {
     }
 });
 
-// View Orders (Debug Only)
 app.get('/api/orders', (req, res) => {
     res.json({ success: true, orders: Array.from(ordersStore.values()) });
 });

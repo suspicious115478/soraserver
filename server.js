@@ -73,8 +73,8 @@ app.post('/api/convert-youtube', (req, res) => {
     console.log('🔄 Converting YouTube URL:', url);
     
     // The exact command you use in command prompt
-    // ✅ NEW: Android client spoofing add ki gayi hai bot check bypass karne ke liye
-    const command = `python -m yt_dlp -g -f "best[protocol=m3u8_native]" --extractor-args "youtube:client=android" "${url}"`;
+    // ✅ NEW: Cookies file ka use karke bot check bypass karna
+    const command = `python -m yt_dlp --cookies cookies.txt -g -f "best[protocol=m3u8_native]" "${url}"`;
     
     exec(command, (error, stdout, stderr) => {
         if (error) {

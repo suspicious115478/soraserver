@@ -61,7 +61,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ NEW: Ultimate Bypass using ACTIVE Cobalt API (api.cobalt.tools)
+// ✅ NEW: Dynamic Cobalt Community Network (Ultimate Bypass for Turnstile/Cloudflare)
 app.post('/api/convert-youtube', async (req, res) => {
     const { url } = req.body;
     
@@ -69,47 +69,109 @@ app.post('/api/convert-youtube', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
     }
 
-    console.log('🔄 Converting YouTube URL via Cobalt API (New Server):', url);
+    console.log('🔄 Converting YouTube URL via Dynamic Cobalt Network:', url);
     
     try {
-        // ✅ NEW OFFICIAL COBALT DOMAIN
-        const response = await fetch('https://api.cobalt.tools/api/json', {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                // Chrome Spoofing to bypass Cloudflare
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-            },
-            body: JSON.stringify({
-                url: url,
-                vQuality: "720", // Perfect resolution for digital screens
-                isAudioOnly: false,
-                filenamePattern: "basic"
-            })
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Cobalt API returned status ${response.status}: ${errText}`);
+        // 1. API se un saare Community Servers ki list nikalna jo abhi ONLINE hain
+        let instances = [];
+        try {
+            const instanceRes = await fetch('https://instances.cobalt.best/api/instances.json');
+            if (instanceRes.ok) {
+                const instanceList = await instanceRes.json();
+                
+                // Filter only servers that are currently ONLINE and support API
+                instances = instanceList
+                    .filter(inst => inst.online && inst.online.api && inst.api)
+                    .map(inst => inst.api);
+                
+                console.log(`📡 Found ${instances.length} active Cobalt community servers.`);
+            }
+        } catch (e) {
+            console.log("⚠️ Could not fetch community instances list.");
         }
 
-        const data = await response.json();
+        // Backup servers just in case community list fails
+        const fallbacks = [
+            'https://cobalt-api.kwiatekm.dev',
+            'https://api.cobalt.ya3390.com',
+            'https://api.cobalt.tools' 
+        ];
 
-        // Cobalt normally returns a direct media URL in data.url
-        if (data.url) {
-            console.log('✅ Cobalt API Conversion successful');
-            // Sending it back as 'm3u8Url' so frontend works perfectly
-            res.json({ success: true, m3u8Url: data.url });
+        // Sabhi servers ko mix (shuffle) karna taaki ek hi server par baar-baar load na pade
+        const apiServers = [...new Set([...instances, ...fallbacks])].sort(() => 0.5 - Math.random());
+
+        let finalMediaUrl = null;
+
+        // 2. Loop lagana: Ek server fail ho to dusre par try karna
+        for (const apiServer of apiServers) {
+            try {
+                console.log(`📡 Trying Cobalt API on: ${apiServer}`);
+                
+                // 4 second se zyada time lage to server chhod do
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000); 
+                
+                // Naya Cobalt v11 API Endpoint (POST /)
+                const response = await fetch(`${apiServer}/`, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                    },
+                    body: JSON.stringify({
+                        url: url,
+                        videoQuality: "720"
+                    }),
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Naye version mein Cobalt 'url' seedha data block me deta hai
+                    if ((data.status === 'redirect' || data.status === 'tunnel') && data.url) {
+                        finalMediaUrl = data.url;
+                        console.log(`✅ Success (v11 API) with server: ${apiServer}`);
+                        break; 
+                    }
+                } else if (response.status === 404 || response.status === 400) {
+                    // Agar server naye update par nahi hai, to purana v7 (api/json) try karo
+                    const oldResponse = await fetch(`${apiServer}/api/json`, {
+                        method: 'POST',
+                        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url, vQuality: "720" })
+                    });
+                    
+                    if (oldResponse.ok) {
+                        const oldData = await oldResponse.json();
+                        if (oldData.url) {
+                            finalMediaUrl = oldData.url;
+                            console.log(`✅ Success (v7 API) with server: ${apiServer}`);
+                            break;
+                        }
+                    }
+                }
+            } catch (err) {
+                // Ignore error and smoothly shift to the next server
+                console.log(`⚠️ ${apiServer} failed, trying next...`);
+            }
+        }
+
+        // 3. Agar link mil gaya to Frontend ko return kar do
+        if (finalMediaUrl) {
+            res.json({ success: true, m3u8Url: finalMediaUrl });
         } else {
-            throw new Error(data.text || "Failed to extract video stream from Cobalt");
+            throw new Error("All community Cobalt instances failed or blocked the request.");
         }
 
     } catch (error) {
-        console.error(`❌ Cobalt conversion failure: ${error.message}`);
+        console.error(`❌ Complete conversion failure: ${error.message}`);
         res.status(500).json({ 
             success: false, 
-            message: 'Failed to convert video. The API might be busy, please try again.' 
+            message: 'All servers are currently busy. Please try again in a few seconds.' 
         });
     }
 });

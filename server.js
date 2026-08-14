@@ -7,6 +7,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
+const ytdl = require('@distube/ytdl-core');
 
 // --- 1. MIDDLEWARES ---
 app.use(cors({
@@ -61,7 +62,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ NEW: Dynamic Cobalt Community Network (Ultimate Bypass for Turnstile/Cloudflare)
+// ✅ NEW: Native Extraction using @distube/ytdl-core (No 3rd-party servers needed)
 app.post('/api/convert-youtube', async (req, res) => {
     const { url } = req.body;
     
@@ -69,109 +70,45 @@ app.post('/api/convert-youtube', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
     }
 
-    console.log('🔄 Converting YouTube URL via Dynamic Cobalt Network:', url);
+    console.log('🔄 Converting YouTube URL natively via ytdl-core:', url);
     
     try {
-        // 1. API se un saare Community Servers ki list nikalna jo abhi ONLINE hain
-        let instances = [];
-        try {
-            const instanceRes = await fetch('https://instances.cobalt.best/api/instances.json');
-            if (instanceRes.ok) {
-                const instanceList = await instanceRes.json();
-                
-                // Filter only servers that are currently ONLINE and support API
-                instances = instanceList
-                    .filter(inst => inst.online && inst.online.api && inst.api)
-                    .map(inst => inst.api);
-                
-                console.log(`📡 Found ${instances.length} active Cobalt community servers.`);
-            }
-        } catch (e) {
-            console.log("⚠️ Could not fetch community instances list.");
-        }
-
-        // Backup servers just in case community list fails
-        const fallbacks = [
-            'https://cobalt-api.kwiatekm.dev',
-            'https://api.cobalt.ya3390.com',
-            'https://api.cobalt.tools' 
-        ];
-
-        // Sabhi servers ko mix (shuffle) karna taaki ek hi server par baar-baar load na pade
-        const apiServers = [...new Set([...instances, ...fallbacks])].sort(() => 0.5 - Math.random());
-
-        let finalMediaUrl = null;
-
-        // 2. Loop lagana: Ek server fail ho to dusre par try karna
-        for (const apiServer of apiServers) {
-            try {
-                console.log(`📡 Trying Cobalt API on: ${apiServer}`);
-                
-                // 4 second se zyada time lage to server chhod do
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 4000); 
-                
-                // Naya Cobalt v11 API Endpoint (POST /)
-                const response = await fetch(`${apiServer}/`, {
-                    method: 'POST',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                    },
-                    body: JSON.stringify({
-                        url: url,
-                        videoQuality: "720"
-                    }),
-                    signal: controller.signal
-                });
-                
-                clearTimeout(timeoutId);
-
-                if (response.ok) {
-                    const data = await response.json();
-                    
-                    // Naye version mein Cobalt 'url' seedha data block me deta hai
-                    if ((data.status === 'redirect' || data.status === 'tunnel') && data.url) {
-                        finalMediaUrl = data.url;
-                        console.log(`✅ Success (v11 API) with server: ${apiServer}`);
-                        break; 
-                    }
-                } else if (response.status === 404 || response.status === 400) {
-                    // Agar server naye update par nahi hai, to purana v7 (api/json) try karo
-                    const oldResponse = await fetch(`${apiServer}/api/json`, {
-                        method: 'POST',
-                        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url, vQuality: "720" })
-                    });
-                    
-                    if (oldResponse.ok) {
-                        const oldData = await oldResponse.json();
-                        if (oldData.url) {
-                            finalMediaUrl = oldData.url;
-                            console.log(`✅ Success (v7 API) with server: ${apiServer}`);
-                            break;
-                        }
-                    }
-                }
-            } catch (err) {
-                // Ignore error and smoothly shift to the next server
-                console.log(`⚠️ ${apiServer} failed, trying next...`);
+        // Fetch raw video info directly from YouTube bypassing proxy servers
+        const info = await ytdl.getInfo(url);
+        
+        // 1. Check if it's a Live Stream (Returns m3u8 HLS format)
+        if (info.videoDetails.isLiveContent && info.formats.some(f => f.isHLS)) {
+            const hlsFormat = info.formats.find(f => f.isHLS);
+            if (hlsFormat && hlsFormat.url) {
+                console.log('✅ Found HLS (m3u8) Livestream URL');
+                return res.json({ success: true, m3u8Url: hlsFormat.url });
             }
         }
 
-        // 3. Agar link mil gaya to Frontend ko return kar do
-        if (finalMediaUrl) {
-            res.json({ success: true, m3u8Url: finalMediaUrl });
+        // 2. For Normal Videos: Get the best direct MP4 format (Audio + Video)
+        let format = ytdl.chooseFormat(info.formats, { 
+            quality: 'highest',
+            filter: 'audioandvideo' 
+        });
+
+        // 3. Fallback: If combined format is blocked, get the highest video-only format
+        if (!format || !format.url) {
+            format = ytdl.chooseFormat(info.formats, { quality: 'highestvideo' });
+        }
+
+        if (format && format.url) {
+            console.log('✅ Native Conversion successful');
+            // Returning as 'm3u8Url' so your frontend script works exactly the same
+            res.json({ success: true, m3u8Url: format.url });
         } else {
-            throw new Error("All community Cobalt instances failed or blocked the request.");
+            throw new Error("No playable direct formats found in video info.");
         }
 
     } catch (error) {
-        console.error(`❌ Complete conversion failure: ${error.message}`);
+        console.error(`❌ ytdl-core conversion failure: ${error.message}`);
         res.status(500).json({ 
             success: false, 
-            message: 'All servers are currently busy. Please try again in a few seconds.' 
+            message: 'Failed to extract video link natively. Ensure the video is public.' 
         });
     }
 });

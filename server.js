@@ -4,7 +4,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
 const path = require('path');
-
+const { exec } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -58,6 +58,38 @@ app.get('/health', (req, res) => {
         status: 'OK', 
         timestamp: new Date().toISOString(),
         razorpay: !!razorpay 
+    });
+});
+
+// ✅ NEW: Convert YouTube URL to m3u8
+app.post('/api/convert-youtube', (req, res) => {
+    const { url } = req.body;
+    
+    // Check if it's a valid YouTube URL
+    if (!url || (!url.includes('youtube.com') && !url.includes('youtu.be'))) {
+        return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
+    }
+
+    console.log('🔄 Converting YouTube URL:', url);
+    
+    // The exact command you use in command prompt
+    const command = `python -m yt_dlp -g -f "best[protocol=m3u8_native]" "${url}"`;
+    
+    exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`❌ yt-dlp error: ${error.message}`);
+            return res.status(500).json({ success: false, message: 'Failed to convert URL. Make sure yt-dlp is installed.' });
+        }
+        
+        // Output from yt-dlp is the direct m3u8 link
+        const m3u8Url = stdout.trim();
+        
+        if (m3u8Url) {
+            console.log('✅ Conversion successful');
+            res.json({ success: true, m3u8Url: m3u8Url });
+        } else {
+            res.status(500).json({ success: false, message: 'Could not extract m3u8 format' });
+        }
     });
 });
 

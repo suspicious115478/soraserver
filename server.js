@@ -61,8 +61,8 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ NEW: Convert YouTube URL to m3u8
-app.post('/api/convert-youtube', (req, res) => {
+// ✅ NEW: Convert YouTube URL to m3u8 using Piped API (Bypasses Render IP block)
+app.post('/api/convert-youtube', async (req, res) => {
     const { url } = req.body;
     
     // Check if it's a valid YouTube URL
@@ -70,30 +70,45 @@ app.post('/api/convert-youtube', (req, res) => {
         return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
     }
 
-    console.log('🔄 Converting YouTube URL:', url);
+    console.log('🔄 Converting YouTube URL via API:', url);
     
-    // The exact command you use in command prompt
-    // ✅ NEW: Cookies file ka use karke bot check bypass karna
-    const command = `python -m yt_dlp --cookies cookies.txt -g -f "best[protocol=m3u8_native]" "${url}"`;
-    
-    exec(command, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`❌ yt-dlp error: ${error.message}`);
-            return res.status(500).json({ success: false, message: 'Failed to convert URL. Make sure yt-dlp is installed.' });
-        }
-        
-        // Output from yt-dlp is the direct m3u8 link
-        const m3u8Url = stdout.trim();
-        
-        if (m3u8Url) {
-            console.log('✅ Conversion successful');
-            res.json({ success: true, m3u8Url: m3u8Url });
-        } else {
-            res.status(500).json({ success: false, message: 'Could not extract m3u8 format' });
-        }
-    });
-});
+    try {
+        // 1. Extract Video ID from URL (Battle-tested regex)
+        const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=))([^"&?\/\s]{11})/);
+        const videoId = match ? match[1] : null;
 
+        if (!videoId) {
+            return res.status(400).json({ success: false, message: 'Could not extract Video ID' });
+        }
+
+        console.log(`🔄 Fetching stream data for ID: ${videoId}`);
+
+        // 2. Use Piped API (Free Open-Source YouTube proxy)
+        // Note: Using Node.js native fetch (works in Node 18+)
+        const response = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`);
+        
+        if (!response.ok) {
+            throw new Error(`API returned status ${response.status}`);
+        }
+        
+        const data = await response.json();
+
+        // 3. Extract the HLS (m3u8) link
+        if (data.hls) {
+            console.log('✅ API Conversion successful');
+            res.json({ success: true, m3u8Url: data.hls });
+        } else {
+            throw new Error("HLS stream not found in response");
+        }
+
+    } catch (error) {
+        console.error(`❌ Conversion error: ${error.message}`);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to convert URL. The video might be private, age-restricted, or blocked.' 
+        });
+    }
+});
 // Create Order
 app.post('/api/create-order', async (req, res) => {
     try {

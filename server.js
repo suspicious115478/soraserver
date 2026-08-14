@@ -61,7 +61,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ NEW: Bulletproof YouTube Converter using Invidious API (Since Piped is dead)
+// ✅ NEW: Ultimate Bypass using Cobalt API (Actively maintained to defeat YouTube blocks)
 app.post('/api/convert-youtube', async (req, res) => {
     const { url } = req.body;
     
@@ -69,87 +69,46 @@ app.post('/api/convert-youtube', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
     }
 
-    console.log('🔄 Converting YouTube URL via Invidious APIs:', url);
+    console.log('🔄 Converting YouTube URL via Cobalt API:', url);
     
     try {
-        // 1. Extract Video ID
-        const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=))([^"&?\/\s]{11})/);
-        const videoId = match ? match[1] : null;
+        // Cobalt API is currently the most resilient bypass for YouTube's bot protection
+        const response = await fetch('https://co.wuk.sh/api/json', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                // Spoofing a real browser to avoid API blocks
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+            },
+            body: JSON.stringify({
+                url: url,
+                vQuality: "720", // Best balance for digital screens
+                isAudioOnly: false,
+                filenamePattern: "basic"
+            })
+        });
 
-        if (!videoId) {
-            return res.status(400).json({ success: false, message: 'Could not extract Video ID' });
+        if (!response.ok) {
+            throw new Error(`Cobalt API returned status ${response.status}`);
         }
 
-        console.log(`🔄 Fetching stream data for ID: ${videoId}`);
+        const data = await response.json();
 
-        // 🌐 LIST OF INVIDIOUS API SERVERS (Active Alternatives to Piped)
-        const INVIDIOUS_INSTANCES = [
-            'https://vid.puffyan.us',
-            'https://inv.tux.pizza',
-            'https://invidious.protokolla.fi',
-            'https://invidious.perennialte.ch',
-            'https://yt.artemislena.eu'
-        ];
-
-        let finalMediaUrl = null;
-
-        // 🔄 Loop through Invidious servers
-        for (const instance of INVIDIOUS_INSTANCES) {
-            try {
-                console.log(`📡 Trying Invidious instance: ${instance}...`);
-                
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 sec timeout
-                
-                const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
-                    signal: controller.signal
-                });
-                
-                clearTimeout(timeoutId);
-
-                if (response.ok) {
-                    const data = await response.json();
-                    
-                    // Priority 1: HLS (m3u8) Stream if available
-                    if (data.hlsUrl) {
-                        finalMediaUrl = data.hlsUrl;
-                        console.log(`✅ Success (HLS) with instance: ${instance}`);
-                        break;
-                    } 
-                    // Priority 2: Direct MP4 Video URL (Universally Playable)
-                    else if (data.formatStreams && data.formatStreams.length > 0) {
-                        // Sort to get best quality (usually 720p with audio)
-                        const bestStream = data.formatStreams.sort((a, b) => {
-                            const resA = parseInt(a.resolution) || 0;
-                            const resB = parseInt(b.resolution) || 0;
-                            return resB - resA; // Descending
-                        })[0];
-                        
-                        finalMediaUrl = bestStream.url;
-                        console.log(`✅ Success (MP4 - ${bestStream.resolution}) with instance: ${instance}`);
-                        break;
-                    }
-                } else {
-                    console.log(`⚠️ Instance ${instance} returned status ${response.status}`);
-                }
-            } catch (err) {
-                console.log(`⚠️ Instance ${instance} failed: ${err.message}`);
-            }
-        }
-
-        // Final check
-        if (finalMediaUrl) {
-            // Hum key ka naam 'm3u8Url' hi rakh rahe hain taaki aapka frontend na tute
-            res.json({ success: true, m3u8Url: finalMediaUrl }); 
+        // Cobalt returns status: "redirect" or "stream" with the direct media URL
+        if ((data.status === 'redirect' || data.status === 'stream') && data.url) {
+            console.log('✅ Cobalt API Conversion successful');
+            // Returning as 'm3u8Url' so your frontend code doesn't need any changes!
+            res.json({ success: true, m3u8Url: data.url });
         } else {
-            throw new Error("All Invidious instances failed to extract the stream.");
+            throw new Error(data.text || "Failed to extract video stream from Cobalt");
         }
 
     } catch (error) {
-        console.error(`❌ Complete conversion failure: ${error.message}`);
+        console.error(`❌ Cobalt conversion failure: ${error.message}`);
         res.status(500).json({ 
             success: false, 
-            message: 'All video proxy servers are currently down. Please try again later.' 
+            message: 'YouTube proxy servers are currently blocking requests. Please try again later.' 
         });
     }
 });

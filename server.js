@@ -61,7 +61,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ NEW: Bulletproof YouTube to m3u8 Converter with Multiple API Fallbacks
+// ✅ NEW: Bulletproof YouTube Converter using Invidious API (Since Piped is dead)
 app.post('/api/convert-youtube', async (req, res) => {
     const { url } = req.body;
     
@@ -69,10 +69,10 @@ app.post('/api/convert-youtube', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
     }
 
-    console.log('🔄 Converting YouTube URL via Fallback APIs:', url);
+    console.log('🔄 Converting YouTube URL via Invidious APIs:', url);
     
     try {
-        // Extract Video ID
+        // 1. Extract Video ID
         const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=))([^"&?\/\s]{11})/);
         const videoId = match ? match[1] : null;
 
@@ -82,27 +82,26 @@ app.post('/api/convert-youtube', async (req, res) => {
 
         console.log(`🔄 Fetching stream data for ID: ${videoId}`);
 
-        // 🌐 LIST OF MULTIPLE PIPED API SERVERS (Mirrors)
-        const PIPED_INSTANCES = [
-            'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.smnz.de',
-            'https://api.piped.projectsegfau.lt',
-            'https://pipedapi.moomoo.me',
-            'https://pipedapi.kavin.rocks' // Rakha hai as a last resort
+        // 🌐 LIST OF INVIDIOUS API SERVERS (Active Alternatives to Piped)
+        const INVIDIOUS_INSTANCES = [
+            'https://vid.puffyan.us',
+            'https://inv.tux.pizza',
+            'https://invidious.protokolla.fi',
+            'https://invidious.perennialte.ch',
+            'https://yt.artemislena.eu'
         ];
 
-        let hlsUrl = null;
+        let finalMediaUrl = null;
 
-        // 🔄 Loop through all servers until one works
-        for (const instance of PIPED_INSTANCES) {
+        // 🔄 Loop through Invidious servers
+        for (const instance of INVIDIOUS_INSTANCES) {
             try {
-                console.log(`📡 Trying API instance: ${instance}...`);
+                console.log(`📡 Trying Invidious instance: ${instance}...`);
                 
-                // Add a 5-second timeout so it doesn't hang if a server is too slow
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 sec timeout
                 
-                const response = await fetch(`${instance}/streams/${videoId}`, {
+                const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
                     signal: controller.signal
                 });
                 
@@ -110,32 +109,47 @@ app.post('/api/convert-youtube', async (req, res) => {
 
                 if (response.ok) {
                     const data = await response.json();
-                    if (data.hls) {
-                        hlsUrl = data.hls;
-                        console.log(`✅ Success with instance: ${instance}`);
-                        break; // 🛑 Yahan loop ruk jayega kyunki URL mil gaya!
+                    
+                    // Priority 1: HLS (m3u8) Stream if available
+                    if (data.hlsUrl) {
+                        finalMediaUrl = data.hlsUrl;
+                        console.log(`✅ Success (HLS) with instance: ${instance}`);
+                        break;
+                    } 
+                    // Priority 2: Direct MP4 Video URL (Universally Playable)
+                    else if (data.formatStreams && data.formatStreams.length > 0) {
+                        // Sort to get best quality (usually 720p with audio)
+                        const bestStream = data.formatStreams.sort((a, b) => {
+                            const resA = parseInt(a.resolution) || 0;
+                            const resB = parseInt(b.resolution) || 0;
+                            return resB - resA; // Descending
+                        })[0];
+                        
+                        finalMediaUrl = bestStream.url;
+                        console.log(`✅ Success (MP4 - ${bestStream.resolution}) with instance: ${instance}`);
+                        break;
                     }
                 } else {
                     console.log(`⚠️ Instance ${instance} returned status ${response.status}`);
                 }
             } catch (err) {
-                console.log(`⚠️ Instance ${instance} failed or timed out: ${err.message}`);
-                // Code automatically next instance par chala jayega
+                console.log(`⚠️ Instance ${instance} failed: ${err.message}`);
             }
         }
 
-        // Final check: Agar kisi bhi server ne URL de diya hai to frontend ko bhej do
-        if (hlsUrl) {
-            res.json({ success: true, m3u8Url: hlsUrl });
+        // Final check
+        if (finalMediaUrl) {
+            // Hum key ka naam 'm3u8Url' hi rakh rahe hain taaki aapka frontend na tute
+            res.json({ success: true, m3u8Url: finalMediaUrl }); 
         } else {
-            throw new Error("All API instances failed to extract the stream.");
+            throw new Error("All Invidious instances failed to extract the stream.");
         }
 
     } catch (error) {
         console.error(`❌ Complete conversion failure: ${error.message}`);
         res.status(500).json({ 
             success: false, 
-            message: 'All video proxy servers are currently busy. Please try again in a few seconds.' 
+            message: 'All video proxy servers are currently down. Please try again later.' 
         });
     }
 });

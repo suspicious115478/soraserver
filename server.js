@@ -61,7 +61,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ NEW: Ultimate Bypass using Cobalt API (Actively maintained to defeat YouTube blocks)
+// ✅ NEW: Ultimate Bypass using ACTIVE Cobalt API (api.cobalt.tools)
 app.post('/api/convert-youtube', async (req, res) => {
     const { url } = req.body;
     
@@ -69,36 +69,37 @@ app.post('/api/convert-youtube', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
     }
 
-    console.log('🔄 Converting YouTube URL via Cobalt API:', url);
+    console.log('🔄 Converting YouTube URL via Cobalt API (New Server):', url);
     
     try {
-        // Cobalt API is currently the most resilient bypass for YouTube's bot protection
-        const response = await fetch('https://co.wuk.sh/api/json', {
+        // ✅ NEW OFFICIAL COBALT DOMAIN
+        const response = await fetch('https://api.cobalt.tools/api/json', {
             method: 'POST',
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
-                // Spoofing a real browser to avoid API blocks
+                // Chrome Spoofing to bypass Cloudflare
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
             },
             body: JSON.stringify({
                 url: url,
-                vQuality: "720", // Best balance for digital screens
+                vQuality: "720", // Perfect resolution for digital screens
                 isAudioOnly: false,
                 filenamePattern: "basic"
             })
         });
 
         if (!response.ok) {
-            throw new Error(`Cobalt API returned status ${response.status}`);
+            const errText = await response.text();
+            throw new Error(`Cobalt API returned status ${response.status}: ${errText}`);
         }
 
         const data = await response.json();
 
-        // Cobalt returns status: "redirect" or "stream" with the direct media URL
-        if ((data.status === 'redirect' || data.status === 'stream') && data.url) {
+        // Cobalt normally returns a direct media URL in data.url
+        if (data.url) {
             console.log('✅ Cobalt API Conversion successful');
-            // Returning as 'm3u8Url' so your frontend code doesn't need any changes!
+            // Sending it back as 'm3u8Url' so frontend works perfectly
             res.json({ success: true, m3u8Url: data.url });
         } else {
             throw new Error(data.text || "Failed to extract video stream from Cobalt");
@@ -108,10 +109,12 @@ app.post('/api/convert-youtube', async (req, res) => {
         console.error(`❌ Cobalt conversion failure: ${error.message}`);
         res.status(500).json({ 
             success: false, 
-            message: 'YouTube proxy servers are currently blocking requests. Please try again later.' 
+            message: 'Failed to convert video. The API might be busy, please try again.' 
         });
     }
 });
+
+
 
 // Create Order
 app.post('/api/create-order', async (req, res) => {

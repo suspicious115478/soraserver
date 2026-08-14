@@ -61,19 +61,18 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ NEW: Convert YouTube URL to m3u8 using Piped API (Bypasses Render IP block)
+// ✅ NEW: Bulletproof YouTube to m3u8 Converter with Multiple API Fallbacks
 app.post('/api/convert-youtube', async (req, res) => {
     const { url } = req.body;
     
-    // Check if it's a valid YouTube URL
     if (!url || (!url.includes('youtube.com') && !url.includes('youtu.be'))) {
         return res.status(400).json({ success: false, message: 'Valid YouTube URL required' });
     }
 
-    console.log('🔄 Converting YouTube URL via API:', url);
+    console.log('🔄 Converting YouTube URL via Fallback APIs:', url);
     
     try {
-        // 1. Extract Video ID from URL (Battle-tested regex)
+        // Extract Video ID
         const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=))([^"&?\/\s]{11})/);
         const videoId = match ? match[1] : null;
 
@@ -83,32 +82,64 @@ app.post('/api/convert-youtube', async (req, res) => {
 
         console.log(`🔄 Fetching stream data for ID: ${videoId}`);
 
-        // 2. Use Piped API (Free Open-Source YouTube proxy)
-        // Note: Using Node.js native fetch (works in Node 18+)
-        const response = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`);
-        
-        if (!response.ok) {
-            throw new Error(`API returned status ${response.status}`);
-        }
-        
-        const data = await response.json();
+        // 🌐 LIST OF MULTIPLE PIPED API SERVERS (Mirrors)
+        const PIPED_INSTANCES = [
+            'https://pipedapi.tokhmi.xyz',
+            'https://pipedapi.smnz.de',
+            'https://api.piped.projectsegfau.lt',
+            'https://pipedapi.moomoo.me',
+            'https://pipedapi.kavin.rocks' // Rakha hai as a last resort
+        ];
 
-        // 3. Extract the HLS (m3u8) link
-        if (data.hls) {
-            console.log('✅ API Conversion successful');
-            res.json({ success: true, m3u8Url: data.hls });
+        let hlsUrl = null;
+
+        // 🔄 Loop through all servers until one works
+        for (const instance of PIPED_INSTANCES) {
+            try {
+                console.log(`📡 Trying API instance: ${instance}...`);
+                
+                // Add a 5-second timeout so it doesn't hang if a server is too slow
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                
+                const response = await fetch(`${instance}/streams/${videoId}`, {
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.hls) {
+                        hlsUrl = data.hls;
+                        console.log(`✅ Success with instance: ${instance}`);
+                        break; // 🛑 Yahan loop ruk jayega kyunki URL mil gaya!
+                    }
+                } else {
+                    console.log(`⚠️ Instance ${instance} returned status ${response.status}`);
+                }
+            } catch (err) {
+                console.log(`⚠️ Instance ${instance} failed or timed out: ${err.message}`);
+                // Code automatically next instance par chala jayega
+            }
+        }
+
+        // Final check: Agar kisi bhi server ne URL de diya hai to frontend ko bhej do
+        if (hlsUrl) {
+            res.json({ success: true, m3u8Url: hlsUrl });
         } else {
-            throw new Error("HLS stream not found in response");
+            throw new Error("All API instances failed to extract the stream.");
         }
 
     } catch (error) {
-        console.error(`❌ Conversion error: ${error.message}`);
+        console.error(`❌ Complete conversion failure: ${error.message}`);
         res.status(500).json({ 
             success: false, 
-            message: 'Failed to convert URL. The video might be private, age-restricted, or blocked.' 
+            message: 'All video proxy servers are currently busy. Please try again in a few seconds.' 
         });
     }
 });
+
 // Create Order
 app.post('/api/create-order', async (req, res) => {
     try {
